@@ -1,0 +1,70 @@
+name: Query boolean native validation
+
+on:
+  push:
+    branches:
+      - codex/native-query-boolean-red
+      - codex/native-query-boolean-green
+      - codex/native-query-boolean-final
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22, 24, 26]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: b7afc19555f8adda1c95dede626146f95c9e3136
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Record fixed source
+        run: |
+          test "$(git rev-parse HEAD)" = b7afc19555f8adda1c95dede626146f95c9e3136
+          mkdir -p native-proof
+          git rev-parse HEAD | tee native-proof/head-before.txt
+          test "$(git hash-object lib/search-params.js)" = 4e437e909d49dcf15f1b39bd61bf7f011f60c10d
+          test "$(git hash-object __tests__/request/query-boolean.test.js)" = 0da05be25a0092f5aefa31a2c01bfeb57e7ceb28
+          git hash-object lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/blobs-before.txt
+          sha256sum lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/sha256-before.txt
+      - run: npm ci
+      - name: Focused query regressions
+        run: |
+          set -o pipefail
+          node --test __tests__/lib/search-params.test.js __tests__/request/query.test.js __tests__/request/query-boolean.test.js 2>&1 | tee native-proof/focused-tests.log
+      - name: Complete native test suite
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee native-proof/full-tests.log
+      - name: Whole project lint
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee native-proof/lint.log
+      - name: Native coverage
+        if: matrix.node != 18
+        run: |
+          set -o pipefail
+          npm run test:coverage 2>&1 | tee native-proof/coverage.log
+          cp coverage/lcov.info native-proof/lcov.info
+      - name: Verify unchanged source after tests
+        if: always()
+        run: |
+          git rev-parse HEAD | tee native-proof/head-after.txt
+          git hash-object lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/blobs-after.txt
+          sha256sum lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/sha256-after.txt
+          diff -u native-proof/head-before.txt native-proof/head-after.txt
+          diff -u native-proof/blobs-before.txt native-proof/blobs-after.txt
+          diff -u native-proof/sha256-before.txt native-proof/sha256-after.txt
+          git diff --exit-code
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: query-boolean-native-proof-node-${{ matrix.node }}
+          path: native-proof
