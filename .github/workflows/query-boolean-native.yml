@@ -1,0 +1,52 @@
+name: Query boolean native validation
+
+on:
+  push:
+    branches:
+      - codex/native-query-boolean-red
+      - codex/native-query-boolean-green
+      - codex/native-query-boolean-final
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Record original source
+        run: |
+          mkdir -p native-proof
+          git rev-parse HEAD | tee native-proof/head-before.txt
+          test "$(git hash-object lib/search-params.js)" = cf824d7e019bba01ac90938a51a4676d7ecf87b6
+          git hash-object lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/blobs-before.txt
+          sha256sum lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/sha256-before.txt
+      - run: npm ci
+      - name: Existing helper and query tests
+        run: |
+          set -o pipefail
+          node --test __tests__/lib/search-params.test.js __tests__/request/query.test.js 2>&1 | tee native-proof/existing-tests.log
+      - name: New boolean regressions on unchanged production
+        run: |
+          set -o pipefail
+          node --test __tests__/request/query-boolean.test.js 2>&1 | tee native-proof/regression-tests.log
+      - name: Verify unchanged source after tests
+        if: always()
+        run: |
+          git rev-parse HEAD | tee native-proof/head-after.txt
+          git hash-object lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/blobs-after.txt
+          sha256sum lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/sha256-after.txt
+          diff -u native-proof/head-before.txt native-proof/head-after.txt
+          diff -u native-proof/blobs-before.txt native-proof/blobs-after.txt
+          diff -u native-proof/sha256-before.txt native-proof/sha256-after.txt
+          git diff --exit-code
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: query-boolean-native-proof
+          path: native-proof
