@@ -14,27 +14,42 @@ jobs:
   native:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22, 24, 26]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
-      - name: Record original source
+          node-version: ${{ matrix.node }}
+      - name: Record fixed source
         run: |
           mkdir -p native-proof
           git rev-parse HEAD | tee native-proof/head-before.txt
-          test "$(git hash-object lib/search-params.js)" = cf824d7e019bba01ac90938a51a4676d7ecf87b6
+          test "$(git hash-object lib/search-params.js)" = 4e437e909d49dcf15f1b39bd61bf7f011f60c10d
+          test "$(git hash-object __tests__/request/query-boolean.test.js)" = 0da05be25a0092f5aefa31a2c01bfeb57e7ceb28
           git hash-object lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/blobs-before.txt
           sha256sum lib/search-params.js __tests__/request/query-boolean.test.js | tee native-proof/sha256-before.txt
       - run: npm ci
-      - name: Existing helper and query tests
+      - name: Focused query regressions
         run: |
           set -o pipefail
-          node --test __tests__/lib/search-params.test.js __tests__/request/query.test.js 2>&1 | tee native-proof/existing-tests.log
-      - name: New boolean regressions on unchanged production
+          node --test __tests__/lib/search-params.test.js __tests__/request/query.test.js __tests__/request/query-boolean.test.js 2>&1 | tee native-proof/focused-tests.log
+      - name: Complete native test suite
         run: |
           set -o pipefail
-          node --test __tests__/request/query-boolean.test.js 2>&1 | tee native-proof/regression-tests.log
+          npm test 2>&1 | tee native-proof/full-tests.log
+      - name: Whole project lint
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee native-proof/lint.log
+      - name: Native coverage
+        if: matrix.node != 18
+        run: |
+          set -o pipefail
+          npm run test:coverage 2>&1 | tee native-proof/coverage.log
+          cp coverage/lcov.info native-proof/lcov.info
       - name: Verify unchanged source after tests
         if: always()
         run: |
@@ -48,5 +63,5 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: query-boolean-native-proof
+          name: query-boolean-native-proof-node-${{ matrix.node }}
           path: native-proof
